@@ -1,0 +1,49 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: petclinic
+  #namespace: staging
+spec:
+  selector:
+      matchLabels:
+        app: petclinic
+  replicas: 3
+  template:
+      metadata:
+        labels:
+            app: petclinic
+      spec:
+        containers:
+        - name: petclinic
+          image: acrlhparis.azurecr.io/spring-petclinic:cb1
+          imagePullPolicy: Always
+          livenessProbe:
+            initialDelaySeconds: 60
+            timeoutSeconds: 2
+            httpGet:
+              # https://docs.spring.io/spring-boot/docs/current/reference/html/common-application-properties.html
+              # management.endpoints.web.base-path=/actuator
+              # https://github.com/spring-projects/spring-petclinic/blob/master/src/main/resources/application.properties
+              path: /manage
+              port: 8080
+              scheme: HTTP
+          readinessProbe:
+            initialDelaySeconds: 30
+            timeoutSeconds: 1
+            tcpSocket:
+              port: 8080
+          resources:
+            # https://github.com/kubernetes/kubernetes/issues/63396
+            requests:
+              memory: "64Mi"
+              cpu: "100m"
+            limits:
+              memory: "256Mi"
+              cpu: "300m"
+          ports:
+          - containerPort: 8080
+            name: server
+          - containerPort: 8081
+            name: management          
+        imagePullSecrets:
+        - name: acr-auth
