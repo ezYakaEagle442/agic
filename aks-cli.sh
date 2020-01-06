@@ -311,7 +311,7 @@ for pod in $(k get po -n $target_namespace -o=name)
 do
 	k describe $pod | grep -i "Error"
 	k logs $pod | grep -i "Error"
-  k exec $pod -n $target_namespace -- wget http://localhost:8080/manage/health
+  k exec $pod -n $target_namespace -- wget http://localhost:8081/manage/health
   #k exec $pod -n $target_namespace -it -- /bin/sh
     # wget http://localhost:8080/manage/health
     # wget http://localhost:8080/manage/info
@@ -330,8 +330,7 @@ done
 kubectl apply -f petclinic-service-cluster-ip.yaml -n $target_namespace
 k get svc -n $target_namespace
 
-# Standard load Balancer Use Case
-# Use the command below to retrieve the External-IP of the Service. Make sure to allow a couple of minutes for the Azure Load Balancer to assign a public IP.
+# Use the command below to retrieve the Cluster-IP of the Service.
 service_ip=$(kubectl get service petclinic-service -n $target_namespace -o jsonpath="{.spec.clusterIP}")
 # All config proiperties ref: sur https://docs.spring.io/spring-boot/docs/current/reference/html/common-application-properties.html 
 echo "Your service is now exposed through a Cluster IP at http://${service_ip}"
