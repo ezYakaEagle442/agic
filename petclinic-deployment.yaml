@@ -15,7 +15,10 @@ spec:
       spec:
         containers:
         - name: petclinic
-          image: acrlhparis.azurecr.io/spring-petclinic:cb1
+          image: acrpinpoc.azurecr.io/spring-petclinic:cg1
+          env:
+          - name: registryname
+            value: "acrpinpoc"
           imagePullPolicy: Always
           livenessProbe:
             initialDelaySeconds: 60

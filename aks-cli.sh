@@ -10,6 +10,9 @@ az --version
 az account list 
 az account show 
 
+az extension remove --name aks-preview
+# az extension add --name aks-preview
+
 # /!\ In CloudShell, the default subscription is not always the one you thought ...
 subName="set here the name of your subscription"
 
@@ -25,7 +28,7 @@ az account show
 location=northeurope 
 echo "location is : " $location 
 
-appName="fmi" 
+appName="pinpoc" 
 echo "appName is : " $appName 
 
 dnz_zone="cloudapp.net" # azurewebsites.net 
@@ -99,13 +102,15 @@ echo "ACR registry Name :" $acr_registry_name
 # https://docs.microsoft.com/en-us/cli/azure/ad/sp?view=azure-cli-latest#az-ad-sp-create-for-rbac
 # https://docs.microsoft.com/en-us/cli/azure/create-an-azure-service-principal-azure-cli?view=azure-cli-latest
 # As of Azure CLI 2.0.68, the --password parameter to create a service principal with a user-defined password is no longer supported to prevent the accidental use of weak passwords.
-sp_password=$(az ad sp create-for-rbac --name $appName --role contributor --query password --output tsv)  #  --keyvault $vault_name --create-cert --cert "${appName}-Certificate"
+sp_password=$(az ad sp create-for-rbac --name $appName --role contributor --query password --output tsv)
 echo $sp_password > spp.txt
 echo "Service Principal Password saved to ./spp.txt. IMPORTANT Keep your password ..." 
 # sp_password=`cat spp.txt`
-sp_id=$(az ad sp list --show-mine --query "[?appDisplayName=='${appName}'].{appId:appId}" --output tsv)
+sp_id=$(az ad sp list --all --query "[?appDisplayName=='${appName}'].{appId:appId}" --output tsv)
+#sp_id=$(az ad sp list --show-mine --query "[?appDisplayName=='${appName}'].{appId:appId}" --output tsv)
 echo "Service Principal ID:" $sp_id 
 echo $sp_id > spid.txt
+# sp_id=`cat spid.txt`
 az ad sp show --id $sp_id
 
 # Get the id of the service principal configured for AKS
@@ -117,10 +122,10 @@ echo "CLIENT_ID:" $CLIENT_ID
 # Create RG & Networks
 #
 ##############################################################################################################################
-az group create --name $rg_name-$location --location $location
+az group create --name $rg_name --location $location
 # https://docs.microsoft.com/en-us/cli/azure/storage/account?view=azure-cli-latest#az-storage-account-create
 # https://docs.microsoft.com/en-us/azure/storage/common/storage-introduction#types-of-storage-accounts
-az storage account create --name $storage_name --kind StorageV2 --sku Standard_LRS --resource-group $rg_name  --location $location --https-only true
+az storage account create --name $storage_name --kind StorageV2 --sku Standard_LRS --resource-group $rg_name --location $location --https-only true
 
 az network vnet create --name $vnet_name --resource-group $rg_name --address-prefixes 172.16.0.0/16 --location $location
 az network vnet subnet create --name $subnet_name --address-prefixes 172.16.1.0/24 --vnet-name $vnet_name --resource-group $rg_name 
@@ -133,7 +138,7 @@ echo "Subnet Id :" $subnet_id
 
 ##############################################################################################################################
 #
-# Create Cluster. For Basic/Advcanced networking options, see https://docs.microsoft.com/en-us/azure/aks/configure-kubenet
+# Create Cluster. For Advanced networking options, see https://docs.microsoft.com/en-us/azure/aks/configure-azure-cni
 #
 ##############################################################################################################################
 az aks create --name $cluster_name \
@@ -173,10 +178,9 @@ kubectl label namespace/staging purpose=staging
 kubectl create namespace production
 kubectl label namespace/production purpose=production
 
-kubectl describe namespace production
-
 # Play
 kubectl get nodes
+kubectl describe namespace production
 
 # https://docs.microsoft.com/en-us/azure/aks/availability-zones#verify-node-distribution-across-zones
 kubectl describe nodes | grep -e "Name:" -e "failure-domain.beta.kubernetes.io/zone"
@@ -199,12 +203,18 @@ kubectl create clusterrolebinding kubernetes-dashboard --clusterrole=cluster-adm
 az aks browse --resource-group $rg_name --name $cluster_name
 
 # https://docs.microsoft.com/en-us/azure/azure-monitor/learn/quick-create-workspace-cli
+# /!\ ATTENTION : check & modify location in the JSON template from https://docs.microsoft.com/en-us/azure/azure-monitor/learn/quick-create-workspace-cli#create-and-deploy-template
+
+# You can use `VIM <file you want to edit>` in Azure Cloud Shell to open the built-in text editor.
+# You can upload files to the Azure Cloud Shell by dragging and dropping them
+# You can also do a `curl -o filename.ext https://file-url/filename.ext` to download a file from the internet.
+
 az group deployment create --resource-group $rg_name --name $analytics_workspace_name --template-file deploylaworkspacetemplate.json
 
 
 ##############################################################################################################################
 #
-# Create Azure Container Registry
+# Create Azure Container Registry : Prmium sku is a requirement to enable replication
 #
 ##############################################################################################################################
 
@@ -213,7 +223,8 @@ az acr create --resource-group $rg_name --name $acr_registry_name --sku Premium 
 # Get the ACR registry resource id
 acr_registry_id=$(az acr show --name $acr_registry_name --resource-group $rg_name --query "id" --output tsv)
 echo "ACR registry ID :" $acr_registry_id
-az acr repository list  --name $acr_registry_name --resource-group $rg_name
+az acr repository list  --name $acr_registry_name # --resource-group $rg_name
+az acr check-health --yes -n $acr_registry_name 
 
 # Configure https://docs.microsoft.com/en-us/azure/container-registry/container-registry-geo-replication#configure-geo-replication
 # https://docs.microsoft.com/en-us/cli/azure/acr/replication?view=azure-cli-latest
@@ -247,22 +258,31 @@ git clone $git_url
 cd spring-petclinic
 mvn package
 
+# On Azure Zulu JRE located at : /usr/lib/jvm/zulu-8-azure-amd64/
+
+# Test the App
+mvn spring-boot:run
+# to check which process runs eventually already on port 8080 :  netstat -anp | grep 8080 
+# lsof -i :8080 | grep LISTEN
+# ps -ef | grep PID
+
 # Test the App
 mvn spring-boot:run
 
 # https://docs.microsoft.com/en-us/java/azure/jdk/java-jdk-docker-images?view=azure-java-stable
-# https://github.com/microsoft/java/blob/master/docker/alpine/Dockerfile.zulu-8u222-jre
+# https://github.com/microsoft/java/blob/master/docker/alpine/Dockerfile.zulu-8u232-jre
 # https://itnext.io/migrating-a-spring-boot-service-to-kubernetes-in-5-steps-7c1702da81b6
 # https://blog.nebrass.fr/playing-with-spring-boot-on-kubernetes/
 # https://www.baeldung.com/spring-boot-minikube
 # https://javaetmoi.com/2018/10/architecture-microservices-avec-spring-cloud/
 # https://javaetmoi.com/2016/12/les-forks-de-spring-petclinic/
+# See also Java LTS roadmap : https://www.oracle.com/technetwork/java/java-se-support-roadmap.html
 
-# Java 8 image : mcr.microsoft.com/java/jdk:8u222-zulu-alpine
-# Java 11 image :  mcr.microsoft.com/java/jre:11u4-zulu-alpine
+# Java 8 image : mcr.microsoft.com/java/jdk:8u232-zulu-alpine
+# Java 11 image :  mcr.microsoft.com/java/jre:11u5-zulu-alpine
 #artifact="spring-petclinic-2.1.0.BUILD-SNAPSHOT.jar"
 artifact="spring-petclinic-2.1.0.BUILD-SNAPSHOT.jar"
-echo -e "FROM mcr.microsoft.com/java/jre:11u4-zulu-alpine\n" \
+echo -e "FROM mcr.microsoft.com/java/jre:11u5-zulu-alpine\n" \
 "VOLUME /tmp \n" \
 "ADD target/${artifact} app.jar \n" \
 "RUN touch /app.jar \n" \
@@ -270,18 +290,32 @@ echo -e "FROM mcr.microsoft.com/java/jre:11u4-zulu-alpine\n" \
 "ENTRYPOINT [ \""java\"", \""-Djava.security.egd=file:/dev/./urandom\"", \""-jar\"", \""/app.jar\"" ] \n"\
 > Dockerfile
 
-az acr build -t "${docker_server}/spring-petclinic:{{.Run.ID}}" -r  $acr_registry_name --file Dockerfile .
-az acr repository list  --name $acr_registry_name --resource-group $rg_name
+az acr build -t "${docker_server}/spring-petclinic:{{.Run.ID}}" -r $acr_registry_name --resource-group $rg_name --file Dockerfile .
+az acr repository list --name $acr_registry_name # --resource-group $rg_name
 
 # Test container
 # az acr run -r $acr_registry_name --cmd "${docker_server}/spring-petclinic:dd4" /dev/null
 # https://docs.microsoft.com/en-us/azure/container-registry/container-registry-helm-repos
 
+# /!\ IMPORTANT : the container image name is hardcoded and must be replaced: ${registryname}.azurecr.io/spring-petclinic:{{.Run.ID}}
 kubectl apply -f petclinic-deployment.yaml -n $target_namespace
 kubectl get deployments -n $target_namespace
 kubectl get deployment petclinic -n $target_namespace 
 kubectl get pods -l app=petclinic -o wide -n $target_namespace
 kubectl get pods -l app=petclinic -o yaml -n $target_namespace | grep podIP
+
+# check errors:
+k get events -n $target_namespace | grep -i "Error"
+
+for pod in $(k get po -n $target_namespace -o=name)
+do
+	k describe $pod | grep -i "Error"
+	k logs $pod | grep -i "Error"
+  k exec $pod -n $target_namespace -- wget http://localhost:8080/manage/health
+  #k exec $pod -n $target_namespace -it -- /bin/sh
+    # wget http://localhost:8080/manage/health
+    # wget http://localhost:8080/manage/info
+done
 
 # kubectl describe pod petclinic-649bdc4d5-964vl -n $target_namespace
 # kubectl logs petclinic-649bdc4d5-964vl -n $target_namespace
@@ -294,32 +328,22 @@ kubectl get pods -l app=petclinic -o yaml -n $target_namespace | grep podIP
 ##############################################################################################################################
 
 kubectl apply -f petclinic-service-cluster-ip.yaml -n $target_namespace
+k get svc -n $target_namespace
 
 # Standard load Balancer Use Case
 # Use the command below to retrieve the External-IP of the Service. Make sure to allow a couple of minutes for the Azure Load Balancer to assign a public IP.
-service_slb_ip=$(kubectl get service petclinic-service -n $target_namespace -o jsonpath="{.status.loadBalancer.ingress[*].ip}")
+service_ip=$(kubectl get service petclinic-service -n $target_namespace -o jsonpath="{.spec.clusterIP}")
 # All config proiperties ref: sur https://docs.spring.io/spring-boot/docs/current/reference/html/common-application-properties.html 
-echo "Your service is now exposed through a Cluster IP at http://${service_slb_ip}"
-echo "Check Live Probe with Spring Actuator : http://${service_slb_ip}/manage/health"
-curl "http://${service_slb_ip}/manage/health" -i -X GET
+echo "Your service is now exposed through a Cluster IP at http://${service_ip}"
+echo "Check Live Probe with Spring Actuator : http://${service_ip}/manage/health"
+curl "http://${service_ip}/manage/health" -i -X GET
 echo "\n"
 # You should received an UP reply :
 # {
 #  "status" : "UP"
 # }
-echo "Checkc spring Management Info at http://${service_slb_ip}/manage/info" -i -X GET
-curl "http://${service_slb_ip}/manage/info" -i -X GET
-
-# ClusterIP Use Case
-# kubectl apply -f petclinic-service-clusterIP.yaml
-helm repo update
-kubectl apply -f helm-rbac.yaml
-helm init --service-account tiller
-
-helm upgrade --install ingress stable/nginx-ingress --namespace ingress
-kubectl get svc -n ingress ingress-nginx-ingress-controller -o jsonpath="{.status.loadBalancer.ingress[*].ip}"
-
-
+echo "Check spring Management Info at http://${service_ip}/manage/info" -i -X GET
+curl "http://${service_ip}/manage/info" -i -X GET
 
 ##############################################################################################################################
 #
@@ -333,10 +357,11 @@ kubectl get svc -n ingress ingress-nginx-ingress-controller -o jsonpath="{.statu
 ##############################################################################################################################
 
 # https://docs.microsoft.com/en-us/azure/application-gateway/ingress-controller-install-new#create-an-identity
-az ad sp create-for-rbac --skip-assignment -o json > auth.json
+az ad sp create-for-rbac --skip-assignment --name $appgwName -o json > auth.json
+#appgw_sp_password=$(az ad sp create-for-rbac --name $appgwName --skip-assignment --query password --output tsv)
+
 appId=$(jq -r ".appId" auth.json)
 password=$(jq -r ".password" auth.json)
-
 objectId=$(az ad sp show --id $appId --query "objectId" -o tsv)
 
 cat <<EOF > parameters.json
@@ -348,21 +373,51 @@ cat <<EOF > parameters.json
 }
 EOF
 
-wget https://raw.githubusercontent.com/Azure/application-gateway-kubernetes-ingress/master/deploy/azuredeploy.json -O template.json
+wget https://raw.githubusercontent.com/Azure/application-gateway-kubernetes-ingress/master/deploy/azuredeploy.json -O appgw-kube-ingress-template.json
 
 
 # modify the template as needed
 az group deployment create \
         -g $rg_name \
         -n $appgwName \
-        --template-file template.json \
+        --template-file appgw-kube-ingress-template.json \
         --parameters parameters.json
 
 az group deployment show -g $rg_name -n $appgwName --query "properties.outputs" -o json > deployment-outputs.json
 
-kubectl apply -f agic.yaml
+```bash
+kubectl create -f https://raw.githubusercontent.com/Azure/aad-pod-identity/master/deploy/infra/deployment-rbac.yaml
+```
+# https://docs.microsoft.com/en-us/azure/application-gateway/ingress-controller-install-new#install-helm
+kubectl create serviceaccount --namespace kube-system tiller-sa
+kubectl create clusterrolebinding tiller-cluster-rule --clusterrole=cluster-admin --serviceaccount=kube-system:tiller-sa
+helm init --tiller-namespace kube-system --service-account tiller-sa
+
+helm repo add application-gateway-kubernetes-ingress https://appgwingress.blob.core.windows.net/ingress-azure-helm-package/
+helm repo update
+
+# applicationGatewayName=$(jq -r ".applicationGatewayName.value" deployment-outputs.json)
+resourceGroupName=$(jq -r ".resourceGroupName.value" deployment-outputs.json)
+subscriptionId=$(jq -r ".subscriptionId.value" deployment-outputs.json)
+identityClientId=$(jq -r ".identityClientId.value" deployment-outputs.json)
+identityResourceId=$(jq -r ".identityResourceId.value" deployment-outputs.json)
+
+# Download helm-config.yaml, which will configure AGIC
+wget https://raw.githubusercontent.com/Azure/application-gateway-kubernetes-ingress/master/docs/examples/sample-helm-config.yaml -O agic-sample-helm-config.yaml
+
+sed -i "s|<subscriptionId>|${subId}|g" agic-sample-helm-config.yaml
+sed -i "s|<resourceGroupName>|${rg_name}|g" agic-sample-helm-config.yaml
+sed -i "s|<applicationGatewayName>|${appgwName}|g" agic-sample-helm-config.yaml
+sed -i "s|<identityResourceId>|${identityResourceId}|g" agic-sample-helm-config.yaml
+sed -i "s|<identityClientId>|${identityClientId}|g" agic-sample-helm-config.yaml
+
+# You can further modify the helm config to enable/disable features
+vim agic-sample-helm-config.yaml
+
+helm install -f agic-sample-helm-config.yaml application-gateway-kubernetes-ingress/ingress-azure
+
 kubectl get ingresses --all-namespaces
-kubectl get ingress 
+
 
 ##############################################################################################################################
 #
@@ -396,8 +451,8 @@ az keyvault secret show --vault-name $vault_name --name "${appName}-Secret"  --o
 #dnz_zone="azurewebsites.net" 
 az network dns zone create -g $rg_name -n $dnz_zone
 az network dns zone list -g $rg_name
-az network dns record-set a add-record -g $rg_name -z $dnz_zone -n www -a ${service_slb_ip}
-# az network dns record-set a add-record -g $rg_name -z $dnz_zone -n lighthouseparis -a ${service_slb_ip}
+az network dns record-set a add-record -g $rg_name -z $dnz_zone -n www -a ${service_ip}
+# az network dns record-set a add-record -g $rg_name -z $dnz_zone -n lighthouseparis -a ${service_ip}
 #az network dns record-set cname create -g $rg_name -z $dnz_zone -n lighthouseparis
 #az network dns record-set cname set-record -g $rg_name -z $dnz_zone -n lighthouseparis -c lighthouseparis.$dnz_zone
 
@@ -586,5 +641,6 @@ az network route-table delete -g  $rg_name -n $route_table
 az network dns record-set a delete -g $rg_name -z $dnz_zone -n www 
 az network dns zone delete -g $rg_name -n $dnz_zone
 az network dns zone list -g $rg_name
+az group delete --name $rg_name
 # /!\ IMPORTANT : Decide to keep or delete your service principal
 # az ad sp delete --id $sp_id
