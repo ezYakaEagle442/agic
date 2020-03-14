@@ -209,12 +209,12 @@ az aks browse --resource-group $rg_name --name $cluster_name
 # You can upload files to the Azure Cloud Shell by dragging and dropping them
 # You can also do a `curl -o filename.ext https://file-url/filename.ext` to download a file from the internet.
 
-az group deployment create --resource-group $rg_name --name $analytics_workspace_name --template-file deploylaworkspacetemplate.json
+az group deployment create --resource-group $rg_name --template-file $analytics_workspace_template --name $analytics_workspace_name --parameters=workspaceName=$analytics_workspace_name
 
 
 ##############################################################################################################################
 #
-# Create Azure Container Registry : Prmium sku is a requirement to enable replication
+# Create Azure Container Registry : Premium sku is a requirement to enable replication
 #
 ##############################################################################################################################
 
@@ -416,6 +416,8 @@ vim agic-sample-helm-config.yaml
 helm install -f agic-sample-helm-config.yaml application-gateway-kubernetes-ingress/ingress-azure
 
 kubectl get ingresses --all-namespaces
+
+# See also : https://github.com/palma21/secureaks#setup-app-gateway-ingress-controller
 
 
 ##############################################################################################################################
